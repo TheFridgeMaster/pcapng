@@ -1,39 +1,105 @@
 ﻿using System;
-using PcapngUtils.PcapNG;
-using System.Threading;
-using PcapngUtils.Common;
+using System.Linq;
+using PcapDotNet.Core;
+using PcapDotNet.Packets;
+using PcapDotNet.Packets.IpV4;
 
 namespace PcapNG_Document_Extractor
 {
     class Program
     {
-        static void OpenPcapNGFile(string filename, bool swapBytes)
+        private static void DispatcherHandler(Packet packet)
         {
-            CancellationTokenSource source = new CancellationTokenSource();
-            CancellationToken token = source.Token;
-            using (var reader = new PcapNGReader(filename, swapBytes))
+            // print packet timestamp and packet length
+            Console.WriteLine(packet.Timestamp.ToString("yyyy-MM-dd hh:mm:ss.fff") + " length:" + packet.Length);
+
+            // Print the packet
+            const int LineLength = 64;
+            for (int i = 0; i != packet.Length; ++i)
             {
-                reader.OnReadPacketEvent += Reader_OnReadPacketEvent;
-                reader.ReadPackets(token);
-                reader.OnReadPacketEvent -= Reader_OnReadPacketEvent;
+                Console.Write((packet[i]).ToString("X2"));
+                if ((i + 1) % LineLength == 0)
+                    Console.WriteLine();
             }
+
+            Console.WriteLine();
+
         }
 
-        static void Reader_OnReadPacketEvent(object context, IPacket packet)
+        public static byte[] StringToByteArray(string hex)
         {
-            var pants = "";
-            int count = 1474;
-            //Console.WriteLine();
-            foreach (byte item in packet.Data)
-            {
-                pants += item.ToString() + System.Environment.NewLine;
-            } 
-            //Console.WriteLine(string.Format("Src IP: {0}.{1}.{2}.{3} - Dst IP: {4}.{5}.{6}.{7} - {8} {9} {10} {11} {12} {13} {14} {15}", packet.Data.GetValue(5), packet.Data.GetValue(6), packet.Data.GetValue(7), packet.Data.GetValue(8), packet.Data.GetValue(9), packet.Data.GetValue(10), packet.Data.GetValue(11), packet.Data.GetValue(12), packet.Data.GetValue(13), packet.Data.GetValue(14), packet.Data.GetValue(15), packet.Data.GetValue(16), packet.Data.GetValue(17), packet.Data.GetValue(18), packet.Data.GetValue(19), packet.Data.GetValue(20)));
-            Console.WriteLine(pants);
+            return Enumerable.Range(0, hex.Length)
+                             .Where(x => x % 2 == 0)
+                             .Select(x => Convert.ToByte(hex.Substring(x, 2), 16))
+                             .ToArray();
         }
+
+        private static void PacketHandler(Packet packet)
+        {
+            // print timestamp and length of the packet
+            //Console.WriteLine(packet.Timestamp.ToString("yyyy-MM-dd hh:mm:ss.fff") + " length:" + packet.Length);
+
+            IpV4Datagram ip = packet.Ethernet.IpV4;
+
+            // header and footer hexadecimal values for pdf filetype
+            string docHeader = "25504446";
+            string docFooter = "0D2525454F460D";
+
+            bool? capturePacket = null;
+            //bool stopCapture = false;
+
+            if (ip.Payload.ToHexadecimalString().Contains(docHeader))
+            {
+                capturePacket = true;
+            }
+
+            var datastream = "";
+
+            if (capturePacket == true)
+            {       
+                    //datastream += ip.Payload.ToHexadecimalString();
+                    Console.WriteLine(ip.Payload.ToHexadecimalString());
+            }
+            else if (ip.Payload.ToHexadecimalString().Contains(docFooter))
+            {
+                capturePacket = false;
+                //System.IO.File.WriteAllBytes("test.pdf", StringToByteArray(datastream));
+            }
+
+            //Console.WriteLine(ip.Payload.ToHexadecimalString());
+            // print raw data content and write to pdf file
+            //Console.WriteLine(datastream);
+            //Console.WriteLine(result);
+            //Console.WriteLine(ip.Payload.ToHexadecimalString());
+        }
+       
         static void Main(string[] args)
         {
-            OpenPcapNGFile(@"c:\users\Fridge\packetsbro.pcapng", false);    
+            //var hex = "";
+            if (args.Length != 1)
+            {
+                Console.WriteLine("usage: " + Environment.GetCommandLineArgs()[0] + " <filename>");
+                return;
+            }
+            // Create the offline device
+            OfflinePacketDevice selectedDevice = new OfflinePacketDevice(args[0]);
+
+            // Open the capture file
+            using (PacketCommunicator communicator = selectedDevice.Open(65536, PacketDeviceOpenAttributes.Promiscuous, 1000))
+            {
+                communicator.SetFilter("tcp");
+                // start the capture
+                var i = 0;
+                communicator.ReceiveSomePackets(out i, 1000, PacketHandler);
+                Console.WriteLine(i);
+                //communicator.ReceivePackets(0, PacketHandler);
+            }
+            /*string docHeader = "25504446";
+            string docFooter = "0D0A2525454F460D0A";
+            int pFrom = hex.IndexOf(docHeader) + docHeader.Length;
+            int pTo = hex.LastIndexOf(docFooter);
+            String result2 = hex.Substring(pFrom, pTo - pFrom);*/
         }
+
     }
 }
